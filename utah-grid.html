@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Utah Grid</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: full screen map, one floating card docked at the bottom */
+:root{
+  --bg:#f3f4f0; --panel:#ffffff; --ink:#1d2b30; --muted:#5c6a68; --line:#d8ddd6;
+  --accent:#1f8a70; --pop:#8fe0cb;
+  --display:"Barlow Semi Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#141b1c; --panel:#1c2627; --ink:#e7ecea; --muted:#98a5a2; --line:#334140;
+         --accent:#4fc0a3; --pop:#1a6f5b; color-scheme:dark; }
+}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.4 var(--body);-webkit-tap-highlight-color:transparent}
+#map{position:fixed;inset:0;background:#dfe3dc}
+.leaflet-top{top:env(safe-area-inset-top,0px)}
+.leaflet-left{left:env(safe-area-inset-left,0px)}
+.leaflet-right{right:env(safe-area-inset-right,0px)}
+.leaflet-control-attribution{font-size:10px}
+
+.tools a{display:flex!important;align-items:center;justify-content:center}
+.tools svg{width:18px;height:18px}
+
+.lbl{font:700 11px/18px var(--display);letter-spacing:.04em;color:#1d2b30;text-align:center;
+     text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 2px #fff;white-space:nowrap}
+.lbl.on{color:#0d4d3f}
+
+.dock{position:fixed;z-index:1000;left:0;right:0;bottom:0;
+      padding-left:max(12px,env(safe-area-inset-left,0px));
+      padding-right:max(12px,env(safe-area-inset-right,0px));
+      padding-bottom:calc(12px + env(safe-area-inset-bottom,0px));
+      display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none}
+.card{pointer-events:auto;box-sizing:border-box;width:100%;max-width:440px;background:var(--panel);
+      border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 28px rgba(12,24,24,.2);
+      padding:12px 14px;display:grid;gap:10px}
+.top{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
+.eyebrow{font:600 11px/1 var(--body);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.count{font:700 34px/1 var(--display);font-variant-numeric:tabular-nums;margin-top:5px}
+.count small{font-size:18px;font-weight:600;color:var(--muted)}
+.pct{font:700 22px/1 var(--display);color:var(--accent);font-variant-numeric:tabular-nums}
+.bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
+.actions{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.btn{font:600 14px/1.1 var(--body);padding:11px 6px;border-radius:9px;border:1px solid var(--line);
+     background:var(--bg);color:var(--ink);text-align:center;cursor:pointer}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn:focus-visible,.toast button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.toast{pointer-events:auto;box-sizing:border-box;max-width:440px;background:var(--ink);color:var(--bg);
+       border-radius:10px;padding:10px 14px;display:flex;gap:14px;align-items:center;font-size:14px;
+       box-shadow:0 6px 20px rgba(0,0,0,.25)}
+.toast button{background:none;border:0;padding:0;color:var(--pop);font:700 14px var(--body);cursor:pointer;white-space:nowrap}
+
+.sheet{position:fixed;inset:0;z-index:2000;background:rgba(10,18,18,.45);display:flex;align-items:flex-end;justify-content:center;
+       padding-left:max(12px,env(safe-area-inset-left,0px));padding-right:max(12px,env(safe-area-inset-right,0px));
+       padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}
+.sheet .card{gap:12px}
+.sheet h2{margin:0;font:700 22px/1.1 var(--display)}
+.sheet p{margin:0;color:var(--muted);font-size:14px}
+.sheet textarea{box-sizing:border-box;width:100%;min-height:140px;border:1px solid var(--line);border-radius:9px;
+                background:var(--bg);color:var(--ink);font:13px/1.4 ui-monospace,Menlo,Consolas,monospace;padding:10px;resize:vertical}
+.row{display:flex;gap:8px;justify-content:flex-end}
+.row .btn{padding-inline:16px}
+@media (prefers-reduced-motion: reduce){.bar i{transition:none}}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="dock" id="dock">
+  <div class="toast" id="toast" hidden></div>
+  <div class="card" id="hud">
+    <div class="top">
+      <div>
+        <div class="eyebrow">Utah · 12 mile squares</div>
+        <div class="count"><span id="done">0</span><small> / <span id="total">0</span></small></div>
+      </div>
+      <div class="pct" id="pct">0%</div>
+    </div>
+    <div class="bar"><i id="barfill"></i></div>
+    <div class="actions">
+      <label class="btn" for="gpx">Import trails</label>
+      <button class="btn" id="copy" type="button">Copy list</button>
+      <button class="btn" id="restore" type="button">Restore</button>
+    </div>
+    <input id="gpx" type="file" multiple hidden>
+  </div>
+</div>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="card">
+    <h2 id="sheetTitle">Restore squares</h2>
+    <p id="sheetText">Paste a list you saved with Copy list. These squares get added to what you have. Nothing gets removed.</p>
+    <textarea id="paste" spellcheck="false"></textarea>
+    <div class="row">
+      <button class="btn" id="cancel" type="button">Cancel</button>
+      <button class="btn primary" id="load" type="button">Add squares</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+/* ---------- Grid definition ---------- */
+const S=37.0, N=42.0, W=-114.05, E=-109.05;      // Utah's box
+const NOTCH_LAT=41.0, NOTCH_LON=-111.05;          // Wyoming notch in the northeast
+const MILES=12;
+const dLat=MILES/69.05;
+const dLon=MILES/(69.17*Math.cos(39.5*Math.PI/180));
+const ROWS=Math.ceil((N-S)/dLat), COLS=Math.ceil((E-W)/dLon);
+const LETTERS='ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const PREFIX='utahgrid12.';
+
+// Columns A.. run west to east, rows 1.. run north to south
+const idOf=(i,j)=>LETTERS[j]+(ROWS-i);
+const rowNum=id=>+id.slice(1);
+
+function cellAt(lat,lon){
+  if(lat<S||lat>N||lon<W||lon>E) return null;
+  if(lat>NOTCH_LAT&&lon>NOTCH_LON) return null;
+  const i=Math.min(ROWS-1,Math.floor((lat-S)/dLat));
+  const j=Math.min(COLS-1,Math.floor((lon-W)/dLon));
+  return idOf(i,j);
+}
+const rect=(s,n,w,e)=>[[s,w],[s,e],[n,e],[n,w]];
+function shape(i,j){
+  const s=S+i*dLat, n=Math.min(N,s+dLat), w=W+j*dLon, e=Math.min(E,w+dLon);
+  const hasA=s<NOTCH_LAT, hasB=n>NOTCH_LAT&&w<NOTCH_LON;
+  if(!hasA&&!hasB) return null;
+  if(!hasB) return rect(s,Math.min(n,NOTCH_LAT),w,e);
+  if(!hasA) return rect(s,n,w,Math.min(e,NOTCH_LON));
+  if(e<=NOTCH_LON) return rect(s,n,w,e);
+  return [[s,w],[s,e],[NOTCH_LAT,e],[NOTCH_LAT,NOTCH_LON],[n,NOTCH_LON],[n,w]];
+}
+
+/* ---------- Storage ---------- */
+function load(k,def){try{const v=localStorage.getItem(PREFIX+k);return v?JSON.parse(v):def}catch(e){return def}}
+function save(k,v){try{localStorage.setItem(PREFIX+k,JSON.stringify(v));return true}catch(e){return false}}
+const done=new Set(load('done',[]));
+let trails=load('trails',[]);
+const saveDone=()=>save('done',[...done]);
+
+/* ---------- Map ---------- */
+const map=L.map('map',{preferCanvas:true,attributionControl:false,minZoom:5,maxZoom:18,zoomSnap:0.5});
+L.control.attribution({position:'topright',prefix:false}).addTo(map);
+const bases={
+  'Streets':L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    {subdomains:'abcd',maxZoom:18,attribution:'© OpenStreetMap contributors © CARTO'}),
+  'Topo':L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+    {subdomains:'abc',maxNativeZoom:17,maxZoom:18,attribution:'© OpenStreetMap contributors, SRTM · © OpenTopoMap (CC-BY-SA)'}),
+  'Satellite':L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    {maxNativeZoom:19,maxZoom:18,attribution:'Imagery © Esri'})
+};
+let baseName=load('base','Streets'); if(!bases[baseName]) baseName='Streets';
+bases[baseName].addTo(map);
+
+const renderer=L.canvas({padding:0.5,tolerance:0});
+let gridColor=baseName==='Satellite'?'#ffffff':'#1d2b30';
+const styleOf=id=>({color:gridColor,weight:1,opacity:.55,fill:true,fillColor:'#1f8a70',fillOpacity:done.has(id)?.45:.02});
+
+const outline=L.polygon([[N,W],[N,NOTCH_LON],[NOTCH_LAT,NOTCH_LON],[NOTCH_LAT,E],[S,E],[S,W]],
+  {renderer,color:gridColor,weight:2.5,opacity:.8,fill:false,interactive:false}).addTo(map);
+
+const cells=new Map();
+const gridLayer=L.layerGroup().addTo(map);
+for(let i=0;i<ROWS;i++){
+  for(let j=0;j<COLS;j++){
+    const pts=shape(i,j); if(!pts) continue;
+    const id=idOf(i,j);
+    const layer=L.polygon(pts,Object.assign({renderer},styleOf(id)));
+    layer.on('click',()=>toggle(id));
+    layer.addTo(gridLayer);
+    cells.set(id,{layer,center:layer.getBounds().getCenter()});
+  }
+}
+const allIds=[...cells.keys()].sort((a,b)=>rowNum(a)-rowNum(b)||a.charCodeAt(0)-b.charCodeAt(0));
+
+/* Trails */
+const trailLayer=L.layerGroup().addTo(map);
+function drawTrails(){
+  trailLayer.clearLayers();
+  for(const t of trails) for(const ln of t.lines)
+    L.polyline(ln,{renderer,color:'#e2571c',weight:3,opacity:.9,interactive:false}).addTo(trailLayer);
+}
+drawTrails();
+
+/* Square labels, shown once you zoom in */
+const labelLayer=L.layerGroup().addTo(map);
+function drawLabels(){
+  labelLayer.clearLayers();
+  if(!map.hasLayer(labelLayer)||map.getZoom()<8) return;
+  const b=map.getBounds().pad(0.2);
+  cells.forEach((c,id)=>{
+    if(!b.contains(c.center)) return;
+    L.marker(c.center,{interactive:false,keyboard:false,
+      icon:L.divIcon({className:'lbl'+(done.has(id)?' on':''),html:id,iconSize:[44,18],iconAnchor:[22,9]})
+    }).addTo(labelLayer);
+  });
+}
+
+L.control.layers(bases,{'Trails':trailLayer,'Square labels':labelLayer},{position:'topright'}).addTo(map);
+
+map.on('baselayerchange',e=>{
+  baseName=e.name; save('base',baseName);
+  gridColor=e.name==='Satellite'?'#ffffff':'#1d2b30';
+  cells.forEach((c,id)=>c.layer.setStyle(styleOf(id)));
+  outline.setStyle({color:gridColor});
+});
+map.on('moveend overlayadd',drawLabels);
+map.on('moveend',()=>{const c=map.getCenter();save('view',[c.lat,c.lng,map.getZoom()])});
+
+/* Locate and home buttons */
+const ICON_LOC='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>';
+const ICON_HOME='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M5 3h8v6h6v12H5z"/></svg>';
+const Tools=L.Control.extend({options:{position:'topleft'},onAdd(){
+  const d=L.DomUtil.create('div','leaflet-bar tools');
+  d.innerHTML=`<a href="#" id="locBtn" role="button" title="Find my square" aria-label="Find my square">${ICON_LOC}</a>
+               <a href="#" id="homeBtn" role="button" title="Show all of Utah" aria-label="Show all of Utah">${ICON_HOME}</a>`;
+  L.DomEvent.disableClickPropagation(d);
+  return d;
+}});
+new Tools().addTo(map);
+
+let me=null;
+document.getElementById('locBtn').addEventListener('click',e=>{e.preventDefault();map.locate({enableHighAccuracy:true,timeout:15000});toast('Finding you…')});
+document.getElementById('homeBtn').addEventListener('click',e=>{e.preventDefault();fitUtah()});
+map.on('locationfound',e=>{
+  if(me) me.setLatLng(e.latlng); else me=L.circleMarker(e.latlng,{renderer,radius:7,color:'#fff',weight:2,fillColor:'#2b6cf0',fillOpacity:1,interactive:false}).addTo(map);
+  map.setView(e.latlng,Math.max(map.getZoom(),11));
+  const id=cellAt(e.latlng.lat,e.latlng.lng);
+  if(!id) toast("You're outside Utah right now.");
+  else if(done.has(id)) toast(`You're in ${id}. Already checked.`);
+  else toast(`You're in ${id}.`,{label:'Check it',fn:()=>toggle(id)});
+});
+map.on('locationerror',()=>toast("Couldn't get your location. Make sure location is allowed for this page."));
+
+/* ---------- Checking squares ---------- */
+function toggle(id){
+  if(done.has(id)){done.delete(id);toast(`${id} cleared`)}
+  else{done.add(id);toast(`${id} checked`)}
+  cells.get(id).layer.setStyle(styleOf(id));
+  saveDone(); updateStats(); drawLabels();
+}
+function updateStats(){
+  const n=allIds.filter(id=>done.has(id)).length, total=allIds.length;
+  const pct=total?Math.round(n/total*1000)/10:0;
+  document.getElementById('done').textContent=n;
+  document.getElementById('total').textContent=total;
+  document.getElementById('pct').textContent=pct+'%';
+  document.getElementById('barfill').style.width=pct+'%';
+}
+
+/* ---------- Trail import (GPX, KML, GeoJSON) ---------- */
+const okPt=p=>isFinite(p[0])&&isFinite(p[1])&&Math.abs(p[0])<=90&&Math.abs(p[1])<=180&&!(p[0]===0&&p[1]===0);
+function parseTracks(text){
+  const lines=[], t=text.trim();
+  if(t[0]==='{'){
+    try{
+      const gj=JSON.parse(t), feats=gj.type==='FeatureCollection'?gj.features:[gj];
+      for(const f of feats){
+        const g=f.geometry||f; if(!g) continue;
+        if(g.type==='LineString') lines.push(g.coordinates.map(c=>[c[1],c[0]]).filter(okPt));
+        else if(g.type==='MultiLineString') g.coordinates.forEach(l=>lines.push(l.map(c=>[c[1],c[0]]).filter(okPt)));
+      }
+    }catch(e){}
+    return lines.filter(l=>l.length);
+  }
+  const doc=new DOMParser().parseFromString(text,'application/xml');
+  if(doc.getElementsByTagName('parsererror').length) return lines;
+  for(const seg of doc.getElementsByTagName('trkseg')){
+    const pts=[...seg.getElementsByTagName('trkpt')].map(p=>[+p.getAttribute('lat'),+p.getAttribute('lon')]).filter(okPt);
+    if(pts.length) lines.push(pts);
+  }
+  for(const ls of doc.getElementsByTagName('LineString')){
+    const c=ls.getElementsByTagName('coordinates')[0]; if(!c) continue;
+    const pts=c.textContent.trim().split(/\s+/).map(s=>s.split(',')).map(a=>[+a[1],+a[0]]).filter(okPt);
+    if(pts.length) lines.push(pts);
+  }
+  for(const tr of doc.getElementsByTagNameNS('*','Track')){
+    const pts=[...tr.getElementsByTagNameNS('*','coord')].map(n=>n.textContent.trim().split(/\s+/)).map(a=>[+a[1],+a[0]]).filter(okPt);
+    if(pts.length) lines.push(pts);
+  }
+  return lines;
+}
+function squaresAlong(line){
+  const out=new Set();
+  for(let k=0;k<line.length;k++){
+    const [a,b]=line[k], id=cellAt(a,b); if(id) out.add(id);
+    if(k+1<line.length){
+      const [c,d]=line[k+1];
+      const steps=Math.ceil(Math.max(Math.abs(c-a)/(dLat/6),Math.abs(d-b)/(dLon/6)));
+      if(steps>1&&steps<=30){           // fill short gaps, ignore big GPS jumps
+        for(let s=1;s<steps;s++){const id2=cellAt(a+(c-a)*s/steps,b+(d-b)*s/steps); if(id2) out.add(id2);}
+      }
+    }
+  }
+  return out;
+}
+function slim(line){
+  const out=[]; let last=null;
+  for(const p of line){
+    if(!last||Math.abs(p[0]-last[0])>4e-4||Math.abs(p[1]-last[1])>5e-4){out.push([+p[0].toFixed(5),+p[1].toFixed(5)]);last=p}
+  }
+  const end=line[line.length-1]; if(last!==end) out.push([+end[0].toFixed(5),+end[1].toFixed(5)]);
+  return out;
+}
+document.getElementById('gpx').addEventListener('change',async e=>{
+  const files=[...e.target.files]; e.target.value=''; if(!files.length) return;
+  toast('Reading trails…');
+  let added=0, imported=0; const failed=[];
+  for(const f of files){
+    let lines=[];
+    try{lines=parseTracks(await f.text())}catch(err){}
+    if(!lines.length){failed.push(f.name);continue}
+    imported++;
+    for(const ln of lines) for(const id of squaresAlong(ln)) if(!done.has(id)){done.add(id);added++}
+    trails=trails.filter(t=>t.name!==f.name);
+    trails.push({name:f.name,lines:lines.map(slim).filter(l=>l.length>1)});
+  }
+  saveDone();
+  const stored=save('trails',trails);
+  cells.forEach((c,id)=>c.layer.setStyle(styleOf(id)));
+  drawTrails(); drawLabels(); updateStats();
+  let msg=`${imported} trail${imported===1?'':'s'} imported, ${added} new square${added===1?'':'s'} checked.`;
+  if(failed.length) msg+=` No track found in ${failed.join(', ')}.`;
+  if(!stored) msg+=' Your squares are saved, but storage is full so some trail lines may not show after a reload.';
+  toast(msg,null,7000);
+});
+
+/* ---------- Copy list and restore ---------- */
+function progressText(){
+  const got=allIds.filter(id=>done.has(id)), miss=allIds.filter(id=>!done.has(id));
+  const pct=Math.round(got.length/allIds.length*1000)/10;
+  return `Utah Grid, ${MILES} mile squares: ${got.length} of ${allIds.length} done (${pct}%)
+Grid key: columns A to ${LETTERS[COLS-1]} run west to east, rows 1 to ${ROWS} run north to south. The southwest corner of square A${ROWS} is 37.00 N, 114.05 W. Each square is ${dLat.toFixed(5)} degrees of latitude by ${dLon.toFixed(5)} degrees of longitude.
+Checked: ${got.join(' ')}
+Missing: ${miss.join(' ')}`;
+}
+function parseIds(txt){
+  const m=txt.match(/Checked:([\s\S]*?)(?:Missing:|$)/i), part=(m?m[1]:txt).toUpperCase(), ids=new Set();
+  for(const x of part.matchAll(/\b([A-Z])(\d{1,2})\b/g)){const id=x[1]+(+x[2]); if(cells.has(id)) ids.add(id)}
+  return ids;
+}
+const sheet=document.getElementById('sheet'), paste=document.getElementById('paste');
+let sheetMode='restore';
+function openSheet(mode,text){
+  sheetMode=mode;
+  const copy=mode==='copy';
+  document.getElementById('sheetTitle').textContent=copy?'Your squares':'Restore squares';
+  document.getElementById('sheetText').textContent=copy
+    ?'Select all of this and copy it. Paste it to Claude for trip planning, or into a note as a backup.'
+    :'Paste a list you saved with Copy list. These squares get added to what you have. Nothing gets removed.';
+  document.getElementById('load').textContent=copy?'Done':'Add squares';
+  document.getElementById('cancel').hidden=copy;
+  paste.readOnly=copy; paste.value=text||'';
+  sheet.hidden=false;
+  if(copy){paste.focus();paste.select()} else paste.focus();
+}
+document.getElementById('copy').addEventListener('click',()=>{
+  const txt=progressText();
+  if(navigator.clipboard&&window.isSecureContext){
+    navigator.clipboard.writeText(txt).then(()=>toast('Copied. Paste it to Claude, or into a note as a backup.'),()=>openSheet('copy',txt));
+  } else openSheet('copy',txt);
+});
+document.getElementById('restore').addEventListener('click',()=>openSheet('restore',''));
+document.getElementById('cancel').addEventListener('click',()=>{sheet.hidden=true});
+document.getElementById('load').addEventListener('click',()=>{
+  if(sheetMode==='copy'){sheet.hidden=true;return}
+  const ids=parseIds(paste.value);
+  if(!ids.size){toast("Couldn't find any squares in that text. It should look like K14 or C3.");return}
+  let added=0; ids.forEach(id=>{if(!done.has(id)){done.add(id);added++;cells.get(id).layer.setStyle(styleOf(id))}});
+  saveDone(); updateStats(); drawLabels(); sheet.hidden=true;
+  toast(`Added ${added} square${added===1?'':'s'}.`);
+});
+sheet.addEventListener('click',e=>{if(e.target===sheet) sheet.hidden=true});
+
+/* ---------- Toast ---------- */
+let toastTimer;
+function toast(msg,action,ms=2600){
+  const el=document.getElementById('toast'); el.innerHTML='';
+  const s=document.createElement('span'); s.textContent=msg; el.appendChild(s);
+  if(action){const b=document.createElement('button'); b.type='button'; b.textContent=action.label;
+    b.onclick=()=>{el.hidden=true;action.fn()}; el.appendChild(b)}
+  el.hidden=false; clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>{el.hidden=true},action?8000:ms);
+}
+
+/* ---------- Start ---------- */
+function fitUtah(){
+  const h=document.getElementById('hud').offsetHeight;
+  map.fitBounds([[S,W],[N,E]],{paddingTopLeft:[12,12],paddingBottomRight:[12,h+24]});
+}
+const view=load('view',null);
+if(view) map.setView([view[0],view[1]],view[2]); else fitUtah();
+updateStats(); drawLabels();
+if(!load('seen',false)){toast('Tap a square to check it off. Tap again to clear it.',null,6000);save('seen',true)}
+</script>
+</body>
+</html>
